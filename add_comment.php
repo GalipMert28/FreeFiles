@@ -24,6 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     $fileId = trim($data['file_id']);
     $text = trim($data['text']);
+    $parentId = isset($data['parent_id']) ? trim($data['parent_id']) : null;
     
     // Validasyon
     if (empty($text)) {
@@ -54,7 +55,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'file_id' => $fileId,
         'text' => $text,
         'date' => date('Y-m-d H:i:s'),
-        'ip' => $_SERVER['REMOTE_ADDR'] // Opsiyonel: Spam kontrolü için
+        'parent_id' => $parentId,
+        'ip' => $_SERVER['REMOTE_ADDR']
     ];
     
     // Yorumu ekle
