@@ -5,14 +5,17 @@ $likesFile = 'likes.json';
 
 // Dosya yoksa oluştur
 if (!file_exists($likesFile)) {
-    file_put_contents($likesFile, json_encode(['files' => [], 'comments' => []]));
+    file_put_contents($likesFile, json_encode([
+        'files' => [],
+        'comments' => []
+    ]));
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $input = file_get_contents('php://input');
     $data = json_decode($input, true);
     
-    if (!$data || !isset($data['type']) || !isset($data['id'])) {
+    if (!$data || !isset($data['type']) || !isset($data['id']) || !isset($data['action'])) {
         echo json_encode([
             'success' => false,
             'message' => 'Geçersiz veri'
@@ -22,22 +25,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     $type = $data['type']; // 'file' veya 'comment'
     $id = $data['id'];
+    $action = $data['action']; // 'like' veya 'dislike'
     
     // Beğenileri yükle
     $likes = json_decode(file_get_contents($likesFile), true);
     
     if ($type === 'file') {
         if (!isset($likes['files'][$id])) {
-            $likes['files'][$id] = 0;
+            $likes['files'][$id] = ['likes' => 0, 'dislikes' => 0];
         }
-        $likes['files'][$id]++;
-        $count = $likes['files'][$id];
+        
+        if ($action === 'like') {
+            $likes['files'][$id]['likes']++;
+        } elseif ($action === 'dislike') {
+            $likes['files'][$id]['dislikes']++;
+        }
+        
+        $likeCount = $likes['files'][$id]['likes'];
+        $dislikeCount = $likes['files'][$id]['dislikes'];
+        
     } elseif ($type === 'comment') {
         if (!isset($likes['comments'][$id])) {
-            $likes['comments'][$id] = 0;
+            $likes['comments'][$id] = ['likes' => 0, 'dislikes' => 0];
         }
-        $likes['comments'][$id]++;
-        $count = $likes['comments'][$id];
+        
+        if ($action === 'like') {
+            $likes['comments'][$id]['likes']++;
+        } elseif ($action === 'dislike') {
+            $likes['comments'][$id]['dislikes']++;
+        }
+        
+        $likeCount = $likes['comments'][$id]['likes'];
+        $dislikeCount = $likes['comments'][$id]['dislikes'];
+        
     } else {
         echo json_encode([
             'success' => false,
@@ -50,7 +70,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (file_put_contents($likesFile, json_encode($likes, JSON_PRETTY_PRINT))) {
         echo json_encode([
             'success' => true,
-            'count' => $count
+            'likes' => $likeCount,
+            'dislikes' => $dislikeCount
         ]);
     } else {
         echo json_encode([

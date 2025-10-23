@@ -8,6 +8,79 @@ if (!file_exists($likesFile)) {
     file_put_contents($likesFile, json_encode(['files' => [], 'comments' => []]));
 }
 
+// Görüntülenme sayısını artır
+function incrementViews($fileId, $dbFile) {
+    $files = json_decode(file_get_contents($dbFile), true);
+    if (is_array($files)) {
+        foreach ($files as &$file) {
+            if ($file['id'] === $fileId) {
+                if (!isset($file['views'])) {
+                    $file['views'] = 0;
+                }
+                $file['views']++;
+                file_put_contents($dbFile, json_encode($files, JSON_PRETTY_PRINT));
+                return $file['views'];
+            }
+        }
+    }
+    return 0;
+}
+
+// Arama fonksiyonu
+function searchFiles($files, $query) {
+    if (empty($query)) {
+        return $files;
+    }
+    
+    $query = strtolower(trim($query));
+    $results = [];
+    
+    foreach ($files as $file) {
+        $score = 0;
+        
+        // Başlıkta ara
+        if (isset($file['title']) && stripos($file['title'], $query) !== false) {
+            $score += 10;
+        }
+        
+        // Açıklamada ara
+        if (isset($file['description']) && stripos($file['description'], $query) !== false) {
+            $score += 5;
+        }
+        
+        // Anahtar kelimelerde ara
+        if (isset($file['keywords']) && is_array($file['keywords'])) {
+            foreach ($file['keywords'] as $keyword) {
+                if (stripos($keyword, $query) !== false) {
+                    $score += 8;
+                }
+            }
+        }
+        
+        // Dosya adında ara
+        if (isset($file['original_name']) && stripos($file['original_name'], $query) !== false) {
+            $score += 3;
+        }
+        
+        // ID'de ara
+        if (isset($file['id']) && stripos($file['id'], $query) !== false) {
+            $score += 15;
+        }
+        
+        if ($score > 0) {
+            $file['search_score'] = $score;
+            $results[] = $file;
+        }
+    }
+    
+    // Skora göre sırala
+    usort($results, function($a, $b) {
+        return $b['search_score'] - $a['search_score'];
+    });
+    
+    return $results;
+}
+
 // ID parametresi varsa dosya detay sayfasını göster
 if (isset($_GET['id'])) {
     $fileId = trim($_GET['id']);
@@ -27,640 +100,24 @@ if (isset($_GET['id'])) {
         }
         
         if ($foundFile) {
+            // Görüntülenme sayısını artır
+            $views = incrementViews($fileId, $dbFile);
+            $foundFile['views'] = $views;
+            
             // Dosya detay sayfası
             $isAudio = $foundFile['extension'] === 'mp3';
             $isVideo = in_array($foundFile['extension'], ['mp4', 'm4u', 'webm', 'avi', 'mov']);
             $isImage = in_array($foundFile['extension'], ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg']);
-            $isText = in_array($foundFile['extension'], ['txt', 'md', 'log', 'json', 'xml', 'html', 'css', 'js', 'php']);
+            $isText = in_array($foundFile['extension'], ['txt', 'md', 'log', 'json', 'xml', 'html', 'css', 'js', 'php', 'py', 'java', 'c', 'cpp']);
             $isMedia = $isAudio || $isVideo || $isImage;
-            $fileSizeMB = round($foundFile['size'] / 1024 / 1024, 2);
+            $fileSizeMB = round(($foundFile['compressed_size'] ?? $foundFile['original_size'] ?? $foundFile['size']) / 1024 / 1024, 2);
             
-            // Beğeni sayısını al
+            // Beğeni sayılarını al
             $likes = json_decode(file_get_contents($likesFile), true);
-            $fileLikes = isset($likes['files'][$fileId]) ? $likes['files'][$fileId] : 0;
-            ?>
-            <!DOCTYPE html>
-            <html lang="tr">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title><?php echo htmlspecialchars($foundFile['original_name']); ?> - FreeFiles</title>
-                <style>
-                    * {
-                        margin: 0;
-                        padding: 0;
-                        box-sizing: border-box;
-                    }
-
-                    body {
-                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-                        background: #1a1a1a;
-                        color: #e0e0e0;
-                        min-height: 100vh;
-                        line-height: 1.6;
-                    }
-
-                    .navbar {
-                        background: #2a2a2a;
-                        border-bottom: 1px solid #3a3a3a;
-                        padding: 1rem 2rem;
-                        position: sticky;
-                        top: 0;
-                        z-index: 1000;
-                    }
-
-                    .nav-content {
-                        max-width: 1000px;
-                        margin: 0 auto;
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                    }
-
-                    .logo {
-                        font-size: 1.4rem;
-                        font-weight: 600;
-                        color: #4a9eff;
-                        text-decoration: none;
-                    }
-
-                    .back-btn {
-                        color: #4a9eff;
-                        text-decoration: none;
-                        font-size: 0.9rem;
-                        padding: 0.5rem 1rem;
-                        border: 1px solid #3a3a3a;
-                        border-radius: 4px;
-                        transition: all 0.2s;
-                    }
-
-                    .back-btn:hover {
-                        background: #3a3a3a;
-                    }
-
-                    .container {
-                        max-width: 1000px;
-                        margin: 2rem auto;
-                        padding: 0 2rem;
-                    }
-
-                    .content-box {
-                        background: #2a2a2a;
-                        border: 1px solid #3a3a3a;
-                        border-radius: 4px;
-                        padding: 2rem;
-                        margin-bottom: 1.5rem;
-                    }
-
-                    h1 {
-                        font-size: 1.8rem;
-                        color: #fff;
-                        margin-bottom: 0.5rem;
-                        font-weight: 600;
-                        word-break: break-word;
-                    }
-
-                    .file-meta {
-                        display: flex;
-                        gap: 1.5rem;
-                        margin: 1rem 0;
-                        font-size: 0.85rem;
-                        color: #999;
-                        flex-wrap: wrap;
-                    }
-
-                    .file-meta-item {
-                        display: flex;
-                        align-items: center;
-                        gap: 0.4rem;
-                    }
-
-                    .media-player {
-                        width: 100%;
-                        margin: 1.5rem 0;
-                        background: #1a1a1a;
-                        border: 1px solid #3a3a3a;
-                        border-radius: 4px;
-                        overflow: hidden;
-                    }
-
-                    audio, video, img {
-                        width: 100%;
-                        display: block;
-                    }
-
-                    .text-viewer {
-                        background: #1a1a1a;
-                        border: 1px solid #3a3a3a;
-                        border-radius: 4px;
-                        padding: 1.5rem;
-                        margin: 1.5rem 0;
-                        max-height: 500px;
-                        overflow-y: auto;
-                        font-family: 'Courier New', monospace;
-                        font-size: 0.9rem;
-                        line-height: 1.5;
-                        white-space: pre-wrap;
-                        word-wrap: break-word;
-                    }
-
-                    .action-bar {
-                        display: flex;
-                        gap: 1rem;
-                        margin: 1.5rem 0;
-                        padding: 1rem 0;
-                        border-top: 1px solid #3a3a3a;
-                        border-bottom: 1px solid #3a3a3a;
-                    }
-
-                    .action-btn {
-                        display: flex;
-                        align-items: center;
-                        gap: 0.5rem;
-                        padding: 0.6rem 1rem;
-                        background: transparent;
-                        border: 1px solid #3a3a3a;
-                        border-radius: 4px;
-                        color: #e0e0e0;
-                        cursor: pointer;
-                        font-size: 0.9rem;
-                        transition: all 0.2s;
-                    }
-
-                    .action-btn:hover {
-                        background: #3a3a3a;
-                    }
-
-                    .action-btn.liked {
-                        background: #4a9eff;
-                        border-color: #4a9eff;
-                        color: #fff;
-                    }
-
-                    .download-btn {
-                        flex: 1;
-                        text-align: center;
-                        padding: 0.8rem;
-                        background: #4a9eff;
-                        color: #fff;
-                        text-decoration: none;
-                        border-radius: 4px;
-                        font-weight: 500;
-                        transition: all 0.2s;
-                    }
-
-                    .download-btn:hover {
-                        background: #3a8eef;
-                    }
-
-                    .section-title {
-                        font-size: 1.2rem;
-                        font-weight: 600;
-                        color: #fff;
-                        margin-bottom: 1rem;
-                        padding-bottom: 0.5rem;
-                        border-bottom: 1px solid #3a3a3a;
-                    }
-
-                    .comment-form {
-                        margin-bottom: 2rem;
-                    }
-
-                    .comment-input {
-                        width: 100%;
-                        padding: 0.8rem;
-                        background: #1a1a1a;
-                        border: 1px solid #3a3a3a;
-                        border-radius: 4px;
-                        color: #e0e0e0;
-                        font-family: inherit;
-                        font-size: 0.9rem;
-                        resize: vertical;
-                        min-height: 80px;
-                    }
-
-                    .comment-input:focus {
-                        outline: none;
-                        border-color: #4a9eff;
-                    }
-
-                    .form-footer {
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                        margin-top: 0.5rem;
-                    }
-
-                    .char-counter {
-                        font-size: 0.8rem;
-                        color: #666;
-                    }
-
-                    .submit-btn {
-                        padding: 0.6rem 1.5rem;
-                        background: #4a9eff;
-                        color: #fff;
-                        border: none;
-                        border-radius: 4px;
-                        cursor: pointer;
-                        font-size: 0.9rem;
-                        font-weight: 500;
-                        transition: all 0.2s;
-                    }
-
-                    .submit-btn:hover {
-                        background: #3a8eef;
-                    }
-
-                    .submit-btn:disabled {
-                        opacity: 0.5;
-                        cursor: not-allowed;
-                    }
-
-                    .comment-card {
-                        background: #2a2a2a;
-                        border: 1px solid #3a3a3a;
-                        border-radius: 4px;
-                        padding: 1rem;
-                        margin-bottom: 1rem;
-                    }
-
-                    .comment-header {
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                        margin-bottom: 0.8rem;
-                    }
-
-                    .comment-author {
-                        font-weight: 500;
-                        color: #4a9eff;
-                        font-size: 0.9rem;
-                    }
-
-                    .comment-date {
-                        font-size: 0.8rem;
-                        color: #666;
-                    }
-
-                    .comment-text {
-                        color: #e0e0e0;
-                        line-height: 1.6;
-                        margin-bottom: 0.8rem;
-                        white-space: pre-wrap;
-                    }
-
-                    .comment-actions {
-                        display: flex;
-                        gap: 1rem;
-                    }
-
-                    .comment-action-btn {
-                        background: transparent;
-                        border: none;
-                        color: #999;
-                        cursor: pointer;
-                        font-size: 0.85rem;
-                        display: flex;
-                        align-items: center;
-                        gap: 0.3rem;
-                        transition: all 0.2s;
-                        padding: 0.3rem 0.5rem;
-                        border-radius: 3px;
-                    }
-
-                    .comment-action-btn:hover {
-                        background: #3a3a3a;
-                        color: #e0e0e0;
-                    }
-
-                    .comment-action-btn.liked {
-                        color: #4a9eff;
-                    }
-
-                    .reply-form {
-                        margin-top: 1rem;
-                        padding-left: 1rem;
-                        border-left: 2px solid #3a3a3a;
-                    }
-
-                    .replies {
-                        margin-top: 1rem;
-                        padding-left: 2rem;
-                        border-left: 2px solid #3a3a3a;
-                    }
-
-                    .reply-card {
-                        background: #1a1a1a;
-                        border: 1px solid #3a3a3a;
-                        border-radius: 4px;
-                        padding: 0.8rem;
-                        margin-bottom: 0.8rem;
-                    }
-
-                    .no-comments {
-                        text-align: center;
-                        padding: 3rem;
-                        color: #666;
-                    }
-
-                    @media (max-width: 768px) {
-                        .container {
-                            padding: 0 1rem;
-                        }
-                        
-                        .content-box {
-                            padding: 1.5rem;
-                        }
-                        
-                        h1 {
-                            font-size: 1.4rem;
-                        }
-
-                        .action-bar {
-                            flex-wrap: wrap;
-                        }
-                    }
-                </style>
-            </head>
-            <body>
-                <nav class="navbar">
-                    <div class="nav-content">
-                        <a href="/" class="logo">FreeFiles</a>
-                        <a href="/" class="back-btn">← Geri Dön</a>
-                    </div>
-                </nav>
-
-                <div class="container">
-                    <div class="content-box">
-                        <h1><?php echo htmlspecialchars($foundFile['original_name']); ?></h1>
-                        
-                        <div class="file-meta">
-                            <span class="file-meta-item">
-                                <span>📁</span>
-                                <span><?php echo strtoupper($foundFile['extension']); ?></span>
-                            </span>
-                            <span class="file-meta-item">
-                                <span>💾</span>
-                                <span><?php echo $fileSizeMB; ?> MB</span>
-                            </span>
-                            <span class="file-meta-item">
-                                <span>📅</span>
-                                <span><?php echo date('d.m.Y H:i', strtotime($foundFile['upload_date'])); ?></span>
-                            </span>
-                            <span class="file-meta-item">
-                                <span>🔑</span>
-                                <span><?php echo $foundFile['id']; ?></span>
-                            </span>
-                        </div>
-
-                        <?php if ($isMedia): ?>
-                        <div class="media-player">
-                            <?php if ($isAudio): ?>
-                                <audio controls>
-                                    <source src="<?php echo $foundFile['path']; ?>" type="audio/mpeg">
-                                </audio>
-                            <?php elseif ($isVideo): ?>
-                                <video controls>
-                                    <source src="<?php echo $foundFile['path']; ?>" type="video/<?php echo $foundFile['extension']; ?>">
-                                </video>
-                            <?php elseif ($isImage): ?>
-                                <img src="<?php echo $foundFile['path']; ?>" alt="<?php echo htmlspecialchars($foundFile['original_name']); ?>">
-                            <?php endif; ?>
-                        </div>
-                        <?php endif; ?>
-
-                        <?php if ($isText && filesize($foundFile['path']) < 1000000): ?>
-                        <div class="text-viewer"><?php echo htmlspecialchars(file_get_contents($foundFile['path'])); ?></div>
-                        <?php endif; ?>
-
-                        <div class="action-bar">
-                            <button class="action-btn" id="likeBtn" data-file-id="<?php echo $fileId; ?>">
-                                <span id="likeIcon">👍</span>
-                                <span id="likeCount"><?php echo $fileLikes; ?></span>
-                            </button>
-                            <a href="<?php echo $foundFile['path']; ?>" class="download-btn" download="<?php echo htmlspecialchars($foundFile['original_name']); ?>">
-                                ⬇️ İndir
-                            </a>
-                        </div>
-                    </div>
-
-                    <div class="content-box">
-                        <h2 class="section-title">💬 Yorumlar</h2>
-                        
-                        <?php
-                        $commentsFile = 'comments.json';
-                        if (!file_exists($commentsFile)) {
-                            file_put_contents($commentsFile, json_encode([]));
-                        }
-                        $allComments = json_decode(file_get_contents($commentsFile), true);
-                        $fileComments = array_filter($allComments, function($c) use ($fileId) {
-                            return isset($c['file_id']) && $c['file_id'] === $fileId && (!isset($c['parent_id']) || $c['parent_id'] === null);
-                        });
-                        usort($fileComments, function($a, $b) {
-                            return strtotime($b['date']) - strtotime($a['date']);
-                        });
-                        
-                        $commentLikes = $likes['comments'] ?? [];
-                        ?>
-
-                        <form class="comment-form" id="mainCommentForm">
-                            <textarea class="comment-input" id="commentText" placeholder="Yorum yaz... (Anonim)" maxlength="500" required></textarea>
-                            <div class="form-footer">
-                                <span class="char-counter"><span id="charCount">0</span>/500</span>
-                                <button type="submit" class="submit-btn">Gönder</button>
-                            </div>
-                        </form>
-
-                        <div id="commentsList">
-                            <?php if (empty($fileComments)): ?>
-                                <div class="no-comments">Henüz yorum yok. İlk yorumu sen yap!</div>
-                            <?php else: ?>
-                                <?php foreach ($fileComments as $comment): 
-                                    $commentId = $comment['id'];
-                                    $commentLikeCount = isset($commentLikes[$commentId]) ? $commentLikes[$commentId] : 0;
-                                    
-                                    // Yanıtları bul
-                                    $replies = array_filter($allComments, function($c) use ($commentId) {
-                                        return isset($c['parent_id']) && $c['parent_id'] === $commentId;
-                                    });
-                                    usort($replies, function($a, $b) {
-                                        return strtotime($a['date']) - strtotime($b['date']);
-                                    });
-                                ?>
-                                <div class="comment-card">
-                                    <div class="comment-header">
-                                        <span class="comment-author">Anonim</span>
-                                        <span class="comment-date"><?php 
-                                            $time = strtotime($comment['date']);
-                                            $diff = time() - $time;
-                                            if ($diff < 60) echo 'Az önce';
-                                            elseif ($diff < 3600) echo floor($diff/60) . ' dk önce';
-                                            elseif ($diff < 86400) echo floor($diff/3600) . ' sa önce';
-                                            elseif ($diff < 604800) echo floor($diff/86400) . ' gün önce';
-                                            else echo date('d.m.Y H:i', $time);
-                                        ?></span>
-                                    </div>
-                                    <div class="comment-text"><?php echo htmlspecialchars($comment['text']); ?></div>
-                                    <div class="comment-actions">
-                                        <button class="comment-action-btn like-comment-btn" data-comment-id="<?php echo $commentId; ?>">
-                                            <span class="like-icon">👍</span>
-                                            <span class="like-count"><?php echo $commentLikeCount; ?></span>
-                                        </button>
-                                        <button class="comment-action-btn reply-btn" data-comment-id="<?php echo $commentId; ?>">
-                                            💬 Yanıtla
-                                        </button>
-                                    </div>
-                                    
-                                    <div class="reply-form" id="replyForm-<?php echo $commentId; ?>" style="display: none;">
-                                        <textarea class="comment-input" placeholder="Yanıt yaz..." maxlength="500"></textarea>
-                                        <div class="form-footer">
-                                            <span class="char-counter"><span class="reply-char-count">0</span>/500</span>
-                                            <button class="submit-btn submit-reply-btn" data-parent-id="<?php echo $commentId; ?>">Yanıtla</button>
-                                        </div>
-                                    </div>
-
-                                    <?php if (!empty($replies)): ?>
-                                    <div class="replies">
-                                        <?php foreach ($replies as $reply): 
-                                            $replyId = $reply['id'];
-                                            $replyLikeCount = isset($commentLikes[$replyId]) ? $commentLikes[$replyId] : 0;
-                                        ?>
-                                        <div class="reply-card">
-                                            <div class="comment-header">
-                                                <span class="comment-author">Anonim</span>
-                                                <span class="comment-date"><?php 
-                                                    $time = strtotime($reply['date']);
-                                                    $diff = time() - $time;
-                                                    if ($diff < 60) echo 'Az önce';
-                                                    elseif ($diff < 3600) echo floor($diff/60) . ' dk önce';
-                                                    elseif ($diff < 86400) echo floor($diff/3600) . ' sa önce';
-                                                    else echo date('d.m.Y', $time);
-                                                ?></span>
-                                            </div>
-                                            <div class="comment-text"><?php echo htmlspecialchars($reply['text']); ?></div>
-                                            <div class="comment-actions">
-                                                <button class="comment-action-btn like-comment-btn" data-comment-id="<?php echo $replyId; ?>">
-                                                    <span class="like-icon">👍</span>
-                                                    <span class="like-count"><?php echo $replyLikeCount; ?></span>
-                                                </button>
-                                            </div>
-                                        </div>
-                                        <?php endforeach; ?>
-                                    </div>
-                                    <?php endif; ?>
-                                </div>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                </div>
-
-                <script>
-                    const fileId = '<?php echo $fileId; ?>';
-                    
-                    // Karakter sayacı
-                    document.getElementById('commentText').addEventListener('input', function() {
-                        document.getElementById('charCount').textContent = this.value.length;
-                    });
-
-                    document.querySelectorAll('.reply-form textarea').forEach(textarea => {
-                        textarea.addEventListener('input', function() {
-                            this.closest('.reply-form').querySelector('.reply-char-count').textContent = this.value.length;
-                        });
-                    });
-
-                    // Dosya beğenme
-                    document.getElementById('likeBtn').addEventListener('click', async function() {
-                        try {
-                            const response = await fetch('like.php', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ type: 'file', id: fileId })
-                            });
-                            const result = await response.json();
-                            if (result.success) {
-                                document.getElementById('likeCount').textContent = result.count;
-                                this.classList.toggle('liked');
-                            }
-                        } catch (error) {
-                            console.error('Beğeni hatası:', error);
-                        }
-                    });
-
-                    // Yorum gönderme
-                    document.getElementById('mainCommentForm').addEventListener('submit', async function(e) {
-                        e.preventDefault();
-                        const text = document.getElementById('commentText').value.trim();
-                        if (!text) return;
-
-                        try {
-                            const response = await fetch('add_comment.php', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ file_id: fileId, text: text })
-                            });
-                            const result = await response.json();
-                            if (result.success) location.reload();
-                        } catch (error) {
-                            alert('Hata: ' + error.message);
-                        }
-                    });
-
-                    // Yorum beğenme
-                    document.querySelectorAll('.like-comment-btn').forEach(btn => {
-                        btn.addEventListener('click', async function() {
-                            const commentId = this.dataset.commentId;
-                            try {
-                                const response = await fetch('like.php', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ type: 'comment', id: commentId })
-                                });
-                                const result = await response.json();
-                                if (result.success) {
-                                    this.querySelector('.like-count').textContent = result.count;
-                                    this.classList.toggle('liked');
-                                }
-                            } catch (error) {
-                                console.error('Beğeni hatası:', error);
-                            }
-                        });
-                    });
-
-                    // Yanıtlama
-                    document.querySelectorAll('.reply-btn').forEach(btn => {
-                        btn.addEventListener('click', function() {
-                            const commentId = this.dataset.commentId;
-                            const replyForm = document.getElementById('replyForm-' + commentId);
-                            replyForm.style.display = replyForm.style.display === 'none' ? 'block' : 'none';
-                        });
-                    });
-
-                    document.querySelectorAll('.submit-reply-btn').forEach(btn => {
-                        btn.addEventListener('click', async function() {
-                            const parentId = this.dataset.parentId;
-                            const textarea = this.closest('.reply-form').querySelector('textarea');
-                            const text = textarea.value.trim();
-                            if (!text) return;
-
-                            try {
-                                const response = await fetch('add_comment.php', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ file_id: fileId, text: text, parent_id: parentId })
-                                });
-                                const result = await response.json();
-                                if (result.success) location.reload();
-                            } catch (error) {
-                                alert('Hata: ' + error.message);
-                            }
-                        });
-                    });
-                </script>
-            </body>
-            </html>
-            <?php
+            $fileLikes = isset($likes['files'][$fileId]['likes']) ? $likes['files'][$fileId]['likes'] : 0;
+            $fileDislikes = isset($likes['files'][$fileId]['dislikes']) ? $likes['files'][$fileId]['dislikes'] : 0;
+            
+            include 'file_detail.php';
             exit;
         } else {
             echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Dosya Bulunamadı</title><style>body{font-family:Arial;background:#1a1a1a;color:#e0e0e0;text-align:center;padding:50px;}</style></head><body><h1>😕 Dosya Bulunamadı</h1><p>Bu ID'ye ait dosya mevcut değil.</p><a href='/' style='color:#4a9eff;text-decoration:none;'>← Ana Sayfaya Dön</a></body></html>";
@@ -675,6 +132,12 @@ if (file_exists($dbFile)) {
     $files = json_decode(file_get_contents($dbFile), true);
 }
 
+// Arama yapıldıysa
+$searchQuery = isset($_GET['q']) ? trim($_GET['q']) : '';
+if (!empty($searchQuery)) {
+    $files = searchFiles($files, $searchQuery);
+}
+
 // Beğeni sayılarını al
 $likes = json_decode(file_get_contents($likesFile), true);
 ?>
@@ -683,7 +146,7 @@ $likes = json_decode(file_get_contents($likesFile), true);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FreeFiles - Özgür Dosya Paylaşımı</title>
+    <title>FreeFiles - Profesyonel Dosya Paylaşım Platformu</title>
     <style>
         * {
             margin: 0;
@@ -708,17 +171,60 @@ $likes = json_decode(file_get_contents($likesFile), true);
         }
 
         .nav-content {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 2rem;
         }
 
         .logo {
             font-size: 1.4rem;
             font-weight: 600;
             color: #4a9eff;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+
+        .search-container {
+            flex: 1;
+            max-width: 600px;
+        }
+
+        .search-form {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 0.7rem 1rem;
+            background: #1a1a1a;
+            border: 1px solid #3a3a3a;
+            border-radius: 4px;
+            color: #e0e0e0;
+            font-size: 0.9rem;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #4a9eff;
+        }
+
+        .search-btn {
+            padding: 0.7rem 1.5rem;
+            background: #4a9eff;
+            border: none;
+            border-radius: 4px;
+            color: #fff;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .search-btn:hover {
+            background: #3a8eef;
         }
 
         .nav-buttons {
@@ -727,7 +233,7 @@ $likes = json_decode(file_get_contents($likesFile), true);
         }
 
         .btn {
-            padding: 0.6rem 1.2rem;
+            padding: 0.7rem 1.2rem;
             border: 1px solid #3a3a3a;
             border-radius: 4px;
             background: transparent;
@@ -737,6 +243,7 @@ $likes = json_decode(file_get_contents($likesFile), true);
             text-decoration: none;
             transition: all 0.2s;
             display: inline-block;
+            white-space: nowrap;
         }
 
         .btn:hover {
@@ -754,32 +261,39 @@ $likes = json_decode(file_get_contents($likesFile), true);
         }
 
         .hero {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 3rem auto 2rem;
             padding: 0 2rem;
-            text-align: center;
         }
 
         .hero h1 {
-            font-size: 2.5rem;
+            font-size: 2.2rem;
             font-weight: 600;
             color: #fff;
             margin-bottom: 0.5rem;
         }
 
         .hero p {
-            font-size: 1.1rem;
+            font-size: 1rem;
             color: #999;
         }
 
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto 3rem;
             padding: 0 2rem;
         }
 
+        .search-info {
+            padding: 1rem;
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            border-radius: 4px;
+            margin-bottom: 2rem;
+        }
+
         .section-title {
-            font-size: 1.3rem;
+            font-size: 1.2rem;
             font-weight: 600;
             color: #fff;
             margin-bottom: 1.5rem;
@@ -789,7 +303,7 @@ $likes = json_decode(file_get_contents($likesFile), true);
 
         .file-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
             gap: 1.5rem;
         }
 
@@ -811,7 +325,7 @@ $likes = json_decode(file_get_contents($likesFile), true);
 
         .file-preview {
             width: 100%;
-            height: 180px;
+            height: 200px;
             background: #1a1a1a;
             display: flex;
             align-items: center;
@@ -828,7 +342,7 @@ $likes = json_decode(file_get_contents($likesFile), true);
         }
 
         .file-icon {
-            font-size: 3rem;
+            font-size: 3.5rem;
         }
 
         .file-overlay {
@@ -837,7 +351,7 @@ $likes = json_decode(file_get_contents($likesFile), true);
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(0, 0, 0, 0.5);
+            background: rgba(0, 0, 0, 0.6);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -850,22 +364,50 @@ $likes = json_decode(file_get_contents($likesFile), true);
         }
 
         .play-icon {
-            font-size: 2.5rem;
+            font-size: 3rem;
             color: #fff;
         }
 
         .file-info {
-            padding: 1rem;
+            padding: 1.2rem;
         }
 
-        .file-name {
-            font-weight: 500;
-            color: #e0e0e0;
+        .file-title {
+            font-weight: 600;
+            color: #fff;
             margin-bottom: 0.5rem;
+            font-size: 1rem;
+            line-height: 1.4;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
             overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            font-size: 0.9rem;
+        }
+
+        .file-description {
+            font-size: 0.85rem;
+            color: #999;
+            margin-bottom: 0.8rem;
+            line-height: 1.4;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .file-keywords {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            margin-bottom: 0.8rem;
+        }
+
+        .keyword-tag {
+            padding: 0.2rem 0.6rem;
+            background: #3a3a3a;
+            border-radius: 3px;
+            font-size: 0.75rem;
+            color: #4a9eff;
         }
 
         .file-meta {
@@ -873,7 +415,9 @@ $likes = json_decode(file_get_contents($likesFile), true);
             justify-content: space-between;
             font-size: 0.8rem;
             color: #666;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.8rem;
+            padding-top: 0.8rem;
+            border-top: 1px solid #3a3a3a;
         }
 
         .file-stats {
@@ -896,7 +440,7 @@ $likes = json_decode(file_get_contents($likesFile), true);
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(0, 0, 0, 0.85);
             z-index: 2000;
             align-items: center;
             justify-content: center;
@@ -911,7 +455,7 @@ $likes = json_decode(file_get_contents($likesFile), true);
             border: 1px solid #3a3a3a;
             border-radius: 4px;
             padding: 2rem;
-            max-width: 500px;
+            max-width: 600px;
             width: 90%;
             max-height: 90vh;
             overflow-y: auto;
@@ -925,7 +469,7 @@ $likes = json_decode(file_get_contents($likesFile), true);
         }
 
         .modal-title {
-            font-size: 1.3rem;
+            font-size: 1.4rem;
             font-weight: 600;
             color: #fff;
         }
@@ -934,7 +478,7 @@ $likes = json_decode(file_get_contents($likesFile), true);
             background: none;
             border: none;
             color: #999;
-            font-size: 1.5rem;
+            font-size: 2rem;
             cursor: pointer;
             padding: 0;
             width: 30px;
@@ -942,20 +486,63 @@ $likes = json_decode(file_get_contents($likesFile), true);
             display: flex;
             align-items: center;
             justify-content: center;
+            line-height: 1;
         }
 
         .close-btn:hover {
             color: #fff;
         }
 
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #e0e0e0;
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+
+        .form-input,
+        .form-textarea {
+            width: 100%;
+            padding: 0.8rem;
+            background: #1a1a1a;
+            border: 1px solid #3a3a3a;
+            border-radius: 4px;
+            color: #e0e0e0;
+            font-family: inherit;
+            font-size: 0.9rem;
+        }
+
+        .form-textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        .form-input:focus,
+        .form-textarea:focus {
+            outline: none;
+            border-color: #4a9eff;
+        }
+
+        .form-hint {
+            font-size: 0.75rem;
+            color: #666;
+            margin-top: 0.3rem;
+        }
+
         .upload-area {
             border: 2px dashed #3a3a3a;
             border-radius: 4px;
-            padding: 3rem 2rem;
+            padding: 2rem;
             text-align: center;
             cursor: pointer;
             transition: all 0.2s;
             background: #1a1a1a;
+            margin-bottom: 1.5rem;
         }
 
         .upload-area:hover,
@@ -965,29 +552,12 @@ $likes = json_decode(file_get_contents($likesFile), true);
         }
 
         .upload-icon {
-            font-size: 3rem;
-            margin-bottom: 1rem;
+            font-size: 2.5rem;
+            margin-bottom: 0.8rem;
         }
 
-        input[type="file"],
-        input[type="text"] {
+        input[type="file"] {
             display: none;
-        }
-
-        .search-input {
-            display: block !important;
-            width: 100%;
-            padding: 0.8rem;
-            background: #1a1a1a;
-            border: 1px solid #3a3a3a;
-            border-radius: 4px;
-            color: #e0e0e0;
-            font-size: 0.9rem;
-        }
-
-        .search-input:focus {
-            outline: none;
-            border-color: #4a9eff;
         }
 
         .empty-state {
@@ -1000,6 +570,22 @@ $likes = json_decode(file_get_contents($likesFile), true);
             font-size: 4rem;
             margin-bottom: 1rem;
             opacity: 0.5;
+        }
+
+        @media (max-width: 1024px) {
+            .file-grid {
+                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            }
+            
+            .nav-content {
+                flex-wrap: wrap;
+            }
+            
+            .search-container {
+                order: 3;
+                width: 100%;
+                max-width: none;
+            }
         }
 
         @media (max-width: 768px) {
@@ -1021,26 +607,43 @@ $likes = json_decode(file_get_contents($likesFile), true);
 <body>
     <nav class="navbar">
         <div class="nav-content">
-            <div class="logo">FreeFiles</div>
+            <a href="/" class="logo">FreeFiles</a>
+            <div class="search-container">
+                <form class="search-form" method="GET">
+                    <input type="text" name="q" class="search-input" placeholder="Başlık, anahtar kelime veya ID ile ara..." value="<?php echo htmlspecialchars($searchQuery); ?>">
+                    <button type="submit" class="search-btn">🔍 Ara</button>
+                </form>
+            </div>
             <div class="nav-buttons">
                 <button class="btn btn-primary" onclick="openUploadModal()">📤 Yükle</button>
-                <button class="btn" onclick="openSearchModal()">🔍 Ara</button>
             </div>
         </div>
     </nav>
 
     <div class="hero">
-        <h1>FreeFiles</h1>
-        <p>Özgür dosya paylaşım platformu</p>
+        <h1>FreeFiles - Profesyonel İçerik Platformu</h1>
+        <p>Dosyalarınızı başlık ve anahtar kelimelerle yükleyin, paylaşın ve keşfedin</p>
     </div>
 
     <div class="container">
-        <h2 class="section-title">📂 Son Yüklenenler</h2>
+        <?php if (!empty($searchQuery)): ?>
+            <div class="search-info">
+                <strong>"<?php echo htmlspecialchars($searchQuery); ?>"</strong> için <?php echo count($files); ?> sonuç bulundu
+                <?php if (count($files) > 0): ?>
+                    <a href="/" style="color: #4a9eff; margin-left: 1rem; text-decoration: none;">← Tümünü Göster</a>
+                <?php endif; ?>
+            </div>
+        <?php endif; ?>
+
+        <h2 class="section-title">
+            <?php echo !empty($searchQuery) ? '🔍 Arama Sonuçları' : '📂 Son Yüklenenler'; ?>
+        </h2>
+        
         <div class="file-grid">
             <?php if (empty($files)): ?>
                 <div class="empty-state" style="grid-column: 1/-1;">
-                    <div class="empty-icon">📭</div>
-                    <p>Henüz dosya yok. İlk sen yükle!</p>
+                    <div class="empty-icon"><?php echo !empty($searchQuery) ? '🔍' : '📭'; ?></div>
+                    <p><?php echo !empty($searchQuery) ? 'Arama kriterlerine uygun sonuç bulunamadı' : 'Henüz dosya yok. İlk sen yükle!'; ?></p>
                 </div>
             <?php else: ?>
                 <?php foreach ($files as $file): 
@@ -1052,17 +655,23 @@ $likes = json_decode(file_get_contents($likesFile), true);
                         'zip' => '📦', 'rar' => '📦', 'txt' => '📃', 'md' => '📃'
                     ];
                     $icon = $icons[$file['extension']] ?? '📄';
-                    $fileSizeMB = round($file['size'] / 1024 / 1024, 2);
+                    $fileSizeMB = round(($file['compressed_size'] ?? $file['size']) / 1024 / 1024, 2);
                     $fileId = $file['id'];
-                    $fileLikes = isset($likes['files'][$fileId]) ? $likes['files'][$fileId] : 0;
+                    $fileLikes = isset($likes['files'][$fileId]['likes']) ? $likes['files'][$fileId]['likes'] : 0;
+                    $fileDislikes = isset($likes['files'][$fileId]['dislikes']) ? $likes['files'][$fileId]['dislikes'] : 0;
                     
                     $isImage = in_array($file['extension'], ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']);
                     $isVideo = in_array($file['extension'], ['mp4', 'm4u', 'webm', 'avi', 'mov']);
+                    
+                    $title = isset($file['title']) ? $file['title'] : $file['original_name'];
+                    $description = isset($file['description']) ? $file['description'] : '';
+                    $keywords = isset($file['keywords']) && is_array($file['keywords']) ? $file['keywords'] : [];
+                    $views = isset($file['views']) ? $file['views'] : 0;
                 ?>
                 <a href="?id=<?php echo $file['id']; ?>" class="file-card">
                     <div class="file-preview">
                         <?php if ($isImage): ?>
-                            <img src="<?php echo $file['path']; ?>" alt="<?php echo htmlspecialchars($file['original_name']); ?>">
+                            <img src="<?php echo $file['path']; ?>" alt="<?php echo htmlspecialchars($title); ?>">
                         <?php elseif ($isVideo): ?>
                             <video src="<?php echo $file['path']; ?>" muted></video>
                             <div class="file-overlay">
@@ -1073,19 +682,37 @@ $likes = json_decode(file_get_contents($likesFile), true);
                         <?php endif; ?>
                     </div>
                     <div class="file-info">
-                        <div class="file-name"><?php echo htmlspecialchars($file['original_name']); ?></div>
+                        <div class="file-title"><?php echo htmlspecialchars($title); ?></div>
+                        
+                        <?php if (!empty($description)): ?>
+                            <div class="file-description"><?php echo htmlspecialchars($description); ?></div>
+                        <?php endif; ?>
+                        
+                        <?php if (!empty($keywords)): ?>
+                            <div class="file-keywords">
+                                <?php foreach (array_slice($keywords, 0, 3) as $keyword): ?>
+                                    <span class="keyword-tag"><?php echo htmlspecialchars($keyword); ?></span>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
+                        
                         <div class="file-meta">
-                            <span><?php echo strtoupper($file['extension']); ?></span>
-                            <span><?php echo $fileSizeMB; ?> MB</span>
+                            <span><?php echo strtoupper($file['extension']); ?> • <?php echo $fileSizeMB; ?> MB</span>
+                            <span><?php echo date('d.m.Y', strtotime($file['upload_date'])); ?></span>
                         </div>
+                        
                         <div class="file-stats">
+                            <span class="stat-item">
+                                <span>👁️</span>
+                                <span><?php echo $views; ?></span>
+                            </span>
                             <span class="stat-item">
                                 <span>👍</span>
                                 <span><?php echo $fileLikes; ?></span>
                             </span>
                             <span class="stat-item">
-                                <span>📅</span>
-                                <span><?php echo date('d.m.Y', strtotime($file['upload_date'])); ?></span>
+                                <span>👎</span>
+                                <span><?php echo $fileDislikes; ?></span>
                             </span>
                         </div>
                     </div>
@@ -1103,26 +730,36 @@ $likes = json_decode(file_get_contents($likesFile), true);
                 <button class="close-btn" onclick="closeUploadModal()">×</button>
             </div>
             <form id="uploadForm" enctype="multipart/form-data">
-                <input type="file" id="fileInput" name="file">
-                <div class="upload-area" id="uploadArea" onclick="triggerFileInput()">
-                    <div class="upload-icon">☁️</div>
-                    <p style="font-weight: 500; margin-bottom: 0.5rem;">Dosya Seç veya Sürükle</p>
-                    <p style="font-size: 0.85rem; color: #666;">Tüm dosya türleri desteklenir</p>
+                <div class="form-group">
+                    <label class="form-label">Başlık *</label>
+                    <input type="text" id="titleInput" class="form-input" placeholder="Dosya başlığı..." maxlength="200" required>
+                    <div class="form-hint">Maksimum 200 karakter</div>
                 </div>
-                <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">Yükle</button>
+                
+                <div class="form-group">
+                    <label class="form-label">Açıklama</label>
+                    <textarea id="descriptionInput" class="form-textarea" placeholder="Dosya hakkında kısa açıklama..." maxlength="500"></textarea>
+                    <div class="form-hint">Maksimum 500 karakter (opsiyonel)</div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Anahtar Kelimeler</label>
+                    <input type="text" id="keywordsInput" class="form-input" placeholder="örnek: müzik, rock, 2024">
+                    <div class="form-hint">Virgülle ayırarak yazın (opsiyonel)</div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Dosya *</label>
+                    <input type="file" id="fileInput" name="file">
+                    <div class="upload-area" id="uploadArea" onclick="triggerFileInput()">
+                        <div class="upload-icon">☁️</div>
+                        <p style="font-weight: 500; margin-bottom: 0.5rem;">Dosya Seç veya Sürükle</p>
+                        <p style="font-size: 0.85rem; color: #666;">Resimler otomatik sıkıştırılır</p>
+                    </div>
+                </div>
+                
+                <button type="submit" class="btn btn-primary" style="width: 100%;">📤 Yükle</button>
             </form>
-        </div>
-    </div>
-
-    <!-- Search Modal -->
-    <div class="modal" id="searchModal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <div class="modal-title">Dosya Ara</div>
-                <button class="close-btn" onclick="closeSearchModal()">×</button>
-            </div>
-            <input type="text" class="search-input" id="searchInput" placeholder="Dosya ID'si girin..." onkeypress="handleSearchKeypress(event)">
-            <button class="btn btn-primary" style="width: 100%; margin-top: 1rem;" onclick="searchFile()">Ara</button>
         </div>
     </div>
 
@@ -1138,10 +775,11 @@ $likes = json_decode(file_get_contents($likesFile), true);
                 fileInput.onchange = function() {
                     if (this.files && this.files[0]) {
                         const fileName = this.files[0].name;
+                        const fileSize = (this.files[0].size / 1024 / 1024).toFixed(2);
                         document.getElementById('uploadArea').innerHTML = `
                             <div class="upload-icon">✅</div>
-                            <p style="font-weight: 500; margin-bottom: 0.5rem;">${fileName}</p>
-                            <p style="font-size: 0.85rem; color: #666;">Yüklemek için butona tıkla</p>
+                            <p style="font-weight: 500; margin-bottom: 0.3rem;">${fileName}</p>
+                            <p style="font-size: 0.85rem; color: #666;">${fileSize} MB</p>
                         `;
                     }
                 };
@@ -1150,14 +788,6 @@ $likes = json_decode(file_get_contents($likesFile), true);
 
         function closeUploadModal() {
             document.getElementById('uploadModal').classList.remove('active');
-        }
-
-        function openSearchModal() {
-            document.getElementById('searchModal').classList.add('active');
-        }
-
-        function closeSearchModal() {
-            document.getElementById('searchModal').classList.remove('active');
         }
 
         const uploadArea = document.getElementById('uploadArea');
@@ -1178,29 +808,42 @@ $likes = json_decode(file_get_contents($likesFile), true);
             if (files.length > 0) {
                 document.getElementById('fileInput').files = files;
                 const fileName = files[0].name;
+                const fileSize = (files[0].size / 1024 / 1024).toFixed(2);
                 uploadArea.innerHTML = `
                     <div class="upload-icon">✅</div>
-                    <p style="font-weight: 500; margin-bottom: 0.5rem;">${fileName}</p>
-                    <p style="font-size: 0.85rem; color: #666;">Yüklemek için butona tıkla</p>
+                    <p style="font-weight: 500; margin-bottom: 0.3rem;">${fileName}</p>
+                    <p style="font-size: 0.85rem; color: #666;">${fileSize} MB</p>
                 `;
             }
         });
 
         document.getElementById('uploadForm').addEventListener('submit', async (e) => {
             e.preventDefault();
+            
             const fileInput = document.getElementById('fileInput');
+            const title = document.getElementById('titleInput').value.trim();
+            const description = document.getElementById('descriptionInput').value.trim();
+            const keywords = document.getElementById('keywordsInput').value.trim();
             
             if (!fileInput || !fileInput.files || !fileInput.files[0]) {
                 alert('Lütfen bir dosya seçin!');
                 return;
             }
+            
+            if (!title) {
+                alert('Lütfen bir başlık girin!');
+                return;
+            }
 
             const formData = new FormData();
             formData.append('file', fileInput.files[0]);
+            formData.append('title', title);
+            formData.append('description', description);
+            formData.append('keywords', keywords);
 
             const submitBtn = e.target.querySelector('button[type="submit"]');
             const originalText = submitBtn.textContent;
-            submitBtn.textContent = 'Yükleniyor...';
+            submitBtn.textContent = '⏳ Yükleniyor...';
             submitBtn.disabled = true;
 
             try {
@@ -1221,7 +864,13 @@ $likes = json_decode(file_get_contents($likesFile), true);
                 }
                 
                 if (result.success) {
-                    alert('Dosya yüklendi!\nID: ' + result.fileId);
+                    let message = 'Dosya başarıyla yüklendi!\n\n';
+                    message += 'Başlık: ' + result.title + '\n';
+                    message += 'ID: ' + result.fileId;
+                    if (result.compressionRatio > 0) {
+                        message += '\n\nSıkıştırma: %' + result.compressionRatio + ' tasarruf';
+                    }
+                    alert(message);
                     closeUploadModal();
                     location.reload();
                 } else {
@@ -1236,29 +885,10 @@ $likes = json_decode(file_get_contents($likesFile), true);
             }
         });
 
-        function handleSearchKeypress(event) {
-            if (event.key === 'Enter') {
-                searchFile();
-            }
-        }
-
-        function searchFile() {
-            const fileId = document.getElementById('searchInput').value.trim();
-            if (fileId) {
-                window.location.href = '?id=' + fileId;
-            } else {
-                alert('Lütfen bir dosya ID\'si girin!');
-            }
-        }
-
         window.onclick = function(event) {
             const uploadModal = document.getElementById('uploadModal');
-            const searchModal = document.getElementById('searchModal');
             if (event.target === uploadModal) {
                 closeUploadModal();
-            }
-            if (event.target === searchModal) {
-                closeSearchModal();
             }
         }
     </script>

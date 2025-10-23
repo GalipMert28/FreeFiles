@@ -4,63 +4,55 @@ ini_set('upload_max_filesize', '100M');
 ini_set('post_max_size', '100M');
 ini_set('memory_limit', '256M');
 
-// Hata raporlamayı aç (debug için)
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
-ini_set('log_errors', 1);
-error_log("Upload.php çalıştırıldı");
-
 header('Content-Type: application/json');
 
 // Dosya yükleme dizini
 $uploadDir = __DIR__ . '/uploads/';
 $dbFile = __DIR__ . '/files.json';
 
-error_log("Upload dizini: " . $uploadDir);
-error_log("DB dosyası: " . $dbFile);
-
 // Dizin yoksa oluştur
 if (!file_exists($uploadDir)) {
     if (!mkdir($uploadDir, 0777, true)) {
-        error_log("Dizin oluşturulamadı: " . $uploadDir);
         echo json_encode([
             'success' => false,
             'message' => 'Upload dizini oluşturulamadı: ' . $uploadDir
         ]);
         exit;
     }
-    error_log("Dizin oluşturuldu: " . $uploadDir);
 }
 
 // JSON dosyası yoksa oluştur
 if (!file_exists($dbFile)) {
     file_put_contents($dbFile, json_encode([]));
-    error_log("JSON dosyası oluşturuldu");
 }
 
-error_log("REQUEST_METHOD: " . $_SERVER['REQUEST_METHOD']);
-error_log("FILES var mı: " . (isset($_FILES['file']) ? 'Evet' : 'Hayır'));
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    error_log("POST isteği alındı");
-    error_log("FILES içeriği: " . print_r($_FILES, true));
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['file'])) {
+    $file = $_FILES['file'];
     
-    if (!isset($_FILES['file'])) {
-        error_log("File parametresi yok!");
+    // Başlık ve anahtar kelimeler
+    $title = isset($_POST['title']) ? trim($_POST['title']) : '';
+    $keywords = isset($_POST['keywords']) ? trim($_POST['keywords']) : '';
+    $description = isset($_POST['description']) ? trim($_POST['description']) : '';
+    
+    // Validasyon
+    if (empty($title)) {
         echo json_encode([
             'success' => false,
-            'message' => 'Dosya gönderilmedi',
-            'debug' => $_FILES
+            'message' => 'Başlık gerekli'
         ]);
         exit;
     }
     
-    $file = $_FILES['file'];
-    error_log("Dosya bilgileri: " . print_r($file, true));
+    if (strlen($title) > 200) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Başlık 200 karakterden uzun olamaz'
+        ]);
+        exit;
+    }
     
     // Dosya yükleme hatası kontrolü
     if ($file['error'] !== UPLOAD_ERR_OK) {
-        error_log("Dosya yükleme hatası: " . $file['error']);
         echo json_encode([
             'success' => false,
             'message' => 'Dosya yükleme hatası kodu: ' . $file['error']
@@ -71,21 +63,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Benzersiz rastgele Base64 ID oluştur
     $randomBytes = random_bytes(8);
     $fileId = rtrim(strtr(base64_encode($randomBytes), '+/', '-_'), '=');
-    error_log("Oluşturulan ID: " . $fileId);
     
     // Dosya bilgileri
     $originalName = basename($file['name']);
     $fileExtension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
-    $fileSize = $file['size'];
+    $originalSize = $file['size'];
     $newFileName = $fileId . '.' . $fileExtension;
     $filePath = $uploadDir . $newFileName;
     
-    error_log("Hedef dosya yolu: " . $filePath);
-    error_log("Kaynak dosya: " . $file['tmp_name']);
-    
     // Dosyayı taşı
     if (move_uploaded_file($file['tmp_name'], $filePath)) {
-        error_log("Dosya başarıyla taşındı!");
+        // Sıkıştırma dene (sadece resimler için)
+        $compressedSize = $originalSize;
+        if (in_array($fileExtension, ['jpg', 'jpeg', 'png'])) {
+            $compressed = compressImage($filePath, $fileExtension);
+            if ($compressed) {
+                $compressedSize = filesize($filePath);
+            }
+        }
         
         // Veritabanına kaydet
         $filesContent = file_get_contents($dbFile);
@@ -95,38 +90,73 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $files = [];
         }
         
+        // Anahtar kelimeleri işle
+        $keywordsArray = array_filter(array_map('trim', explode(',', $keywords)));
+        
         $fileData = [
             'id' => $fileId,
+            'title' => $title,
+            'description' => $description,
+            'keywords' => $keywordsArray,
             'original_name' => $originalName,
             'file_name' => $newFileName,
             'extension' => $fileExtension,
-            'size' => $fileSize,
+            'original_size' => $originalSize,
+            'compressed_size' => $compressedSize,
+            'compression_ratio' => $originalSize > 0 ? round((1 - $compressedSize / $originalSize) * 100, 2) : 0,
             'upload_date' => date('Y-m-d H:i:s'),
-            'path' => 'uploads/' . $newFileName
+            'path' => 'uploads/' . $newFileName,
+            'views' => 0
         ];
         
         array_unshift($files, $fileData);
         file_put_contents($dbFile, json_encode($files, JSON_PRETTY_PRINT));
-        error_log("JSON dosyası güncellendi");
         
         echo json_encode([
             'success' => true,
             'message' => 'Dosya başarıyla yüklendi',
             'fileId' => $fileId,
-            'fileName' => $originalName
+            'title' => $title,
+            'compressionRatio' => $fileData['compression_ratio']
         ]);
     } else {
-        error_log("Dosya taşıma BAŞARISIZ!");
         echo json_encode([
             'success' => false,
-            'message' => 'Dosya taşıma hatası. Kaynak: ' . $file['tmp_name'] . ' Hedef: ' . $filePath
+            'message' => 'Dosya taşıma hatası'
         ]);
     }
 } else {
-    error_log("POST dışı istek: " . $_SERVER['REQUEST_METHOD']);
     echo json_encode([
         'success' => false,
-        'message' => 'Geçersiz istek metodu: ' . $_SERVER['REQUEST_METHOD']
+        'message' => 'Geçersiz istek'
     ]);
+}
+
+// Resim sıkıştırma fonksiyonu
+function compressImage($filePath, $extension) {
+    try {
+        $quality = 85; // Kalite seviyesi (0-100)
+        
+        if ($extension === 'jpg' || $extension === 'jpeg') {
+            $image = imagecreatefromjpeg($filePath);
+            if ($image) {
+                imagejpeg($image, $filePath, $quality);
+                imagedestroy($image);
+                return true;
+            }
+        } elseif ($extension === 'png') {
+            $image = imagecreatefrompng($filePath);
+            if ($image) {
+                // PNG için compression level 0-9
+                imagepng($image, $filePath, 6);
+                imagedestroy($image);
+                return true;
+            }
+        }
+    } catch (Exception $e) {
+        // Sıkıştırma başarısız olursa orijinal dosyayı koru
+        return false;
+    }
+    return false;
 }
 ?>
